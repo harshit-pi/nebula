@@ -22,7 +22,8 @@ import (
 
 type GenericConn struct {
 	*net.UDPConn
-	l *slog.Logger
+	l    *slog.Logger
+	isV4 bool
 }
 
 var _ Conn = &GenericConn{}
@@ -34,12 +35,19 @@ func NewGenericListener(l *slog.Logger, s Settings) (Conn, error) {
 		return nil, err
 	}
 	if uc, ok := pc.(*net.UDPConn); ok {
-		return &GenericConn{UDPConn: uc, l: l}, nil
+		// Go picks the socket's family from the listen address and the platform, an IPv4 local address means it
+		// can only reach IPv4 remotes
+		la, _ := uc.LocalAddr().(*net.UDPAddr)
+		return &GenericConn{UDPConn: uc, l: l, isV4: la != nil && la.IP.To4() != nil}, nil
 	}
 	return nil, fmt.Errorf("Unexpected PacketConn: %T %#v", pc, pc)
 }
 
 func (u *GenericConn) WriteTo(b []byte, addr netip.AddrPort) error {
+	// Go's own error for this is an untyped AddrError, give the one our other platforms do instead
+	if u.isV4 && !addr.Addr().Unmap().Is4() {
+		return ErrInvalidIPv6RemoteForSocket
+	}
 	_, err := u.UDPConn.WriteToUDPAddrPort(b, addr)
 	return err
 }
@@ -48,7 +56,7 @@ func (u *GenericConn) WriteBatch(bufs [][]byte, addrs []netip.AddrPort) (int, er
 	// An un-sendable destination costs its own packet, never the ones behind it in the batch.
 	written := 0
 	for i, b := range bufs {
-		if _, err := u.UDPConn.WriteToUDPAddrPort(b, addrs[i]); err == nil {
+		if err := u.WriteTo(b, addrs[i]); err == nil {
 			written++
 		} else {
 			u.l.Debug("failed to write packet in batch", "udpAddr", addrs[i], "error", err)
