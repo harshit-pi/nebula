@@ -38,9 +38,10 @@ const (
 	groupSocketMode os.FileMode = 0660
 )
 
-// errReopenForAccess is returned by applyAccess on a platform whose access control is
-// fixed when the endpoint is created, so a change means creating it again.
-var errReopenForAccess = errors.New("access is fixed at listen time")
+// errAccessFixed is returned by applyAccess on a platform whose access control is fixed
+// when the endpoint is created and cannot be changed while it is served. The endpoint
+// is kept as it is and the change waits for a restart; see endpoint.rebindLocked.
+var errAccessFixed = errors.New("access is fixed when the endpoint is created")
 
 // ownerOnly is the control socket's access when no group is configured. The mode
 // itself is not configurable there; what an operator can choose is a group,

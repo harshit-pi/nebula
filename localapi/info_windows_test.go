@@ -3,6 +3,7 @@
 package localapi
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
@@ -25,7 +26,8 @@ func TestInfoIsServedOnAPipe(t *testing.T) {
 	require.NoError(t, err)
 	group := Group{Name: "Users", ID: users.String()}
 
-	s := NewInfoServer(test.NewLogger(), stubInfoHandler())
+	logs := &bytes.Buffer{}
+	s := NewInfoServer(test.NewLoggerWithOutput(logs), stubInfoHandler())
 	path := pipePrefix + "nebula-info-test"
 	require.NoError(t, s.Rebind(context.Background(), path, Access{Mode: groupSocketMode, Group: group}))
 	t.Cleanup(s.Stop)
@@ -48,10 +50,17 @@ func TestInfoIsServedOnAPipe(t *testing.T) {
 	assert.Equal(t, http.StatusOK, res.StatusCode)
 	assert.Contains(t, string(body), `"me"`)
 
-	// A change of group means a new pipe under the same name, still serving.
+	// A pipe's access is fixed when it is created, so taking the group away keeps the
+	// pipe as it is, still admitting the group, and says the change waits for a restart.
 	require.NoError(t, s.Rebind(context.Background(), path, Access{Mode: groupSocketMode}))
+	assert.Contains(t, logs.String(), "restart nebula to apply it")
 	res, err = client.Get("http://nebula/v1/whoami")
 	require.NoError(t, err)
 	res.Body.Close()
-	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Equal(t, http.StatusOK, res.StatusCode, "the group is still admitted")
+
+	// The mode means nothing to a pipe, so a change to it alone is no change at all.
+	logs.Reset()
+	require.NoError(t, s.Rebind(context.Background(), path, Access{Mode: 0666, Group: group}))
+	assert.NotContains(t, logs.String(), "restart nebula")
 }

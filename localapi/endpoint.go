@@ -52,7 +52,15 @@ func (e *endpoint) Path() string {
 
 // rebindLocked brings the endpoint up at path with acc, moves it there, or, when it is
 // already there, applies a changed access; with nothing changed it does nothing, which
-// is what lets Wire's first attempt and its reload callback be the same call.
+// is what lets Wire's first attempt and its reload callback be the same call. Whether
+// the path is the one being served, and whether the access differs, are the platform's
+// to say: a pipe name is matched without case, and a mode means nothing to a pipe.
+//
+// On a platform whose access is fixed when the endpoint is created, a changed access
+// is not applied: the endpoint keeps serving with the access it has, the change is
+// logged as waiting for a restart, and nothing is torn down. The name could only be
+// created again once every client had closed, which nothing here controls, so closing
+// the endpoint to recreate it would leave it down for as long as any client held on.
 //
 // The new socket is bound before the old one is given up: a bad path in a reloaded
 // config leaves the operator with the endpoint they already had rather than none. serve
@@ -65,10 +73,9 @@ func (e *endpoint) Path() string {
 // exits. listen does not take e.mu, so holding it costs the other methods one bind's
 // wait, at most the stale socket probe, once per reload.
 func (e *endpoint) rebindLocked(ctx context.Context, path string, acc Access, serve func(net.Listener) io.Closer) error {
-	reopening := false
-	if e.closer != nil && e.path == path {
+	if e.closer != nil && samePath(e.path, path) {
 		if cur, ok := identifySocket(path); ok && cur == e.id {
-			if e.access == acc {
+			if !accessChanged(e.access, acc) {
 				return nil
 			}
 			err := applyAccess(path, acc)
@@ -77,18 +84,12 @@ func (e *endpoint) rebindLocked(ctx context.Context, path string, acc Access, se
 				e.l.Info("Changed the "+e.name+"'s socket access", "path", path, "access", acc.String())
 				return nil
 			}
-			if !errors.Is(err, errReopenForAccess) {
-				return fmt.Errorf("could not change the access of %s: %w", path, err)
+			if errors.Is(err, errAccessFixed) {
+				e.l.Warn("The "+e.name+"'s access cannot be changed while it is served; restart nebula to apply it",
+					"path", path, "serving", e.access.String(), "configured", acc.String())
+				return nil
 			}
-
-			// The platform fixes access when the endpoint is created, so it is created
-			// again. The name cannot be held twice, so the old one goes first, and a bind
-			// that then fails leaves the endpoint down rather than on the old access the
-			// operator asked to change; that is reported below.
-			reopening = true
-			old := e.closer
-			e.forgetLocked()
-			_ = old.Close()
+			return fmt.Errorf("could not change the access of %s: %w", path, err)
 		} else {
 			// The node at the path is not the one this endpoint bound: something outside
 			// nebula removed it, logind clearing /run/user/<uid> on logout or a unit
@@ -107,9 +108,6 @@ func (e *endpoint) rebindLocked(ctx context.Context, path string, acc Access, se
 
 	ln, err := listen(path, acc)
 	if err != nil {
-		if reopening {
-			return fmt.Errorf("the %s was closed to change its access and could not be created again: %w", e.name, err)
-		}
 		return err
 	}
 	id, _ := identifySocket(path)
@@ -133,7 +131,7 @@ func (e *endpoint) rebindLocked(ctx context.Context, path string, acc Access, se
 	// Stop serving the old socket. When it was on this same path its node is already
 	// gone, and the node there now is the new socket's, so only the closer goes.
 	if old != nil {
-		if oldPath == path {
+		if samePath(oldPath, path) {
 			_ = old.Close()
 		} else {
 			release(old, oldPath, oldID)

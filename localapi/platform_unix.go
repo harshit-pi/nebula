@@ -341,6 +341,15 @@ const DefaultSocketPath = "/var/run/" + DirName + "/ctl.sock"
 // checked instead.
 func unprotectedNameWarning(string) string { return "" }
 
+// samePath reports whether two configured socket paths name one node: cleaned, so a
+// doubled separator or a trailing one does not hide the match, and otherwise exact,
+// since a unix path is case-sensitive.
+func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
+
+// accessChanged reports whether acc differs from the access a socket was bound with.
+// Both the mode and the group are the node's, so both count.
+func accessChanged(old, acc Access) bool { return old != acc }
+
 // checkSocketPath refuses a configured socket path that is relative, or too long to
 // bind. A relative path would mean a different socket to the daemon and to nebula ctl,
 // each resolving it against the directory it happened to be started from.

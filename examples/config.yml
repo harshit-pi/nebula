@@ -251,7 +251,7 @@ punchy:
     # the user running nebula. It must not be writable by anyone else.
     #socket: /var/run/nebula/ctl.sock
     # A group (or account/group/SID on Windows) that should be allowed to access the
-    # socket.
+    # socket. On Windows a change to the group requires a restart.
     #group: nebula
 
   # The info socket is not made available by default. If you enable it, it makes some
@@ -279,7 +279,7 @@ punchy:
     # \\.\pipe\ProtectedPrefix\Administrators\.
     #socket: /var/run/nebula/info.sock
     # A group (or account/group/SID on Windows) that should be allowed to access the
-    # socket.
+    # socket. On windows, a change requires a restart to take effect.
     #group: nebula-info
     # Octal mode for the socket, as a quoted string. Defaults to "0600" unless a
     # group is set, in which case it defaults to "0660". On Windows a pipe has no
